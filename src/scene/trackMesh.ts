@@ -1,20 +1,24 @@
 import * as THREE from "three";
-import type { Track, TrackPath } from "../model/track";
+import type { Switches, Track, TrackGraph } from "../model/track";
 
 /** Height of the rail tops above the track bed. Vehicles stand on this. */
 export const RAIL_TOP = 0.5;
 const GAUGE = 1.2;
 const PLATFORM = 18;
+const Y = new THREE.Vector3(0, 1, 0);
 
 type Profile = [side: number, up: number][];
 
 /**
- * Sweeps a 2D profile (side, up) along the track. Each profile edge gets its own vertices so the
- * edges stay sharp while the surface is smooth along the curve.
+ * Sweeps a 2D profile (side, up) along an edge from s0 to s1. Each profile edge gets its own
+ * vertices so the edges stay sharp while the surface is smooth along the curve.
  */
-function sweep(path: TrackPath, step: number, profile: Profile) {
-  const ss = path.samples(step);
-  if (path.closed) ss.push(ss[0]);
+function sweep(graph: TrackGraph, edge: number, step: number, profile: Profile, s0 = 0, s1 = graph.edges[edge].length) {
+  const n = Math.max(1, Math.round(Math.abs(s1 - s0) / step));
+  const ss = Array.from({ length: n + 1 }, (_, i) => {
+    const s = s0 + ((s1 - s0) * i) / n;
+    return { p: graph.pointOn(edge, s), t: graph.tangentOn(edge, s) };
+  });
   const pos: number[] = [];
   const idx: number[] = [];
   const side = new THREE.Vector3();
@@ -48,8 +52,11 @@ const mats = {
   roof: new THREE.MeshStandardMaterial({ color: 0xd93025, roughness: 0.7 }),
   post: new THREE.MeshStandardMaterial({ color: 0x5f6368, roughness: 0.6 }),
   buffer: new THREE.MeshStandardMaterial({ color: 0xc5221f, roughness: 0.6 }),
+  stationHouse: new THREE.MeshStandardMaterial({ color: 0xf3dfc1, roughness: 0.9 }),
   house: new THREE.MeshStandardMaterial({ roughness: 0.9 }),
   houseRoof: new THREE.MeshStandardMaterial({ roughness: 0.8 }),
+  route: new THREE.MeshStandardMaterial({ color: 0xfbbc04, emissive: 0xfbbc04, emissiveIntensity: 0.5, side: THREE.DoubleSide }),
+  lever: new THREE.MeshStandardMaterial({ color: 0x202124, roughness: 0.6 }),
 };
 
 const WALLS = [0xf5efe3, 0xf3dfc1, 0xe8eef2, 0xf6e7a8, 0xe9d3cf, 0xdfe8d5];
@@ -66,7 +73,7 @@ export function rng(seed: number) {
 
 const hash = (s: string) => [...s].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7);
 
-function dispose(obj: THREE.Object3D) {
+export function disposeTree(obj: THREE.Object3D) {
   obj.traverse((o) => {
     if (o instanceof THREE.Mesh) o.geometry.dispose();
     if (o instanceof THREE.Sprite) {
@@ -76,68 +83,9 @@ function dispose(obj: THREE.Object3D) {
   });
 }
 
-/** Builds the track bed, sleepers, rails, bridge pillars, buffer stops and the towns. */
-export function buildTrack(path: TrackPath, track: Track) {
-  const group = new THREE.Group();
-  const shadowed = (m: THREE.Mesh) => ((m.castShadow = true), (m.receiveShadow = true), m);
-
-  // The bed reaches below ground so it reads as an embankment on the ground and a deck on bridges.
-  group.add(shadowed(new THREE.Mesh(sweep(path, 0.8, [[-1.9, -0.6], [1.9, -0.6], [1.45, 0.25], [-1.45, 0.25]]), mats.ballast)));
-  for (const s of [-1, 1]) {
-    const x = (s * GAUGE) / 2;
-    group.add(shadowed(new THREE.Mesh(sweep(path, 0.5, [[x - 0.05, 0.37], [x + 0.05, 0.37], [x + 0.05, RAIL_TOP], [x - 0.05, RAIL_TOP]]), mats.rail)));
-  }
-
-  const sleepers = path.samples(0.7);
-  const sm = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.12, 0.32), mats.sleeper, sleepers.length);
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const one = new THREE.Vector3(1, 1, 1);
-  const Y = new THREE.Vector3(0, 1, 0);
-  sleepers.forEach(({ p, t }, i) => {
-    q.setFromAxisAngle(Y, Math.atan2(t.x, t.z));
-    m.compose(new THREE.Vector3(p.x, p.y + 0.31, p.z), q, one);
-    sm.setMatrixAt(i, m);
-  });
-  sm.receiveShadow = true;
-  group.add(sm);
-
-  // Pillars under raised track, except where they would stand on a lower track.
-  const low = path.samples(1).filter(({ p }) => p.y < 1.5).map(({ p }) => p);
-  const pillars = path.samples(5).filter(({ p }) => p.y > 0.8 && !low.some((l) => Math.hypot(l.x - p.x, l.z - p.z) < 2.6));
-  if (pillars.length) {
-    const pm = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.45, 0.55, 1, 10), mats.pillar, pillars.length);
-    pillars.forEach(({ p }, i) => {
-      const h = p.y - 0.6;
-      m.compose(new THREE.Vector3(p.x, h / 2, p.z), new THREE.Quaternion(), new THREE.Vector3(1, h, 1));
-      pm.setMatrixAt(i, m);
-    });
-    pm.castShadow = true;
-    group.add(pm);
-  }
-
-  if (!path.closed) {
-    for (const end of [0, path.length]) group.add(bufferStop(path, end, end === 0 ? -1 : 1));
-  }
-
-  const trackPts = path.samples(2).map(({ p }) => p);
-  const houses: { p: THREE.Vector3; r: number; size: number }[] = [];
-  for (const st of track.stations) {
-    const s = path.pointS[st.point];
-    group.add(platform(path, s));
-    group.add(label(st.name, path.pointAt(s).add(new THREE.Vector3(0, 16, 0))));
-    houses.push(...townHouses(path, s, st.name, trackPts, houses));
-  }
-  if (houses.length) group.add(...houseMeshes(houses));
-
-  return { group, dispose: () => dispose(group) };
-}
-
-/** Frame placed at s, +z along the track, +x to the left. */
-function frameAt(path: TrackPath, s: number) {
+/** Group placed at p, its +z along t, +x to the left. */
+export function frameAt(p: THREE.Vector3, t: THREE.Vector3) {
   const g = new THREE.Group();
-  const p = path.pointAt(s);
-  const t = path.tangentAt(s);
   g.position.copy(p);
   g.rotation.y = Math.atan2(t.x, t.z);
   return g;
@@ -151,30 +99,106 @@ function box(g: THREE.Group, size: [number, number, number], mat: THREE.Material
   return mesh;
 }
 
-function bufferStop(path: TrackPath, s: number, dir: 1 | -1) {
-  const g = frameAt(path, s + dir * 0.6);
+/** Builds the track bed, sleepers, rails, bridge pillars, buffer stops and the towns. */
+export function buildTrack(graph: TrackGraph, track: Track) {
+  const group = new THREE.Group();
+  const shadowed = (m: THREE.Mesh) => ((m.castShadow = true), (m.receiveShadow = true), m);
+  // The bed is what a tap or click on the track hits in the editor.
+  const beds: THREE.Mesh[] = [];
+
+  for (const e of graph.edges) {
+    // The bed reaches below ground so it reads as an embankment on the ground and a deck on bridges.
+    const bed = shadowed(new THREE.Mesh(sweep(graph, e.index, 0.8, [[-1.9, -0.6], [1.9, -0.6], [1.45, 0.25], [-1.45, 0.25]]), mats.ballast));
+    bed.userData.edge = e.index;
+    beds.push(bed);
+    group.add(bed);
+    for (const s of [-1, 1]) {
+      const x = (s * GAUGE) / 2;
+      group.add(shadowed(new THREE.Mesh(sweep(graph, e.index, 0.5, [[x - 0.05, 0.37], [x + 0.05, 0.37], [x + 0.05, RAIL_TOP], [x - 0.05, RAIL_TOP]]), mats.rail)));
+    }
+  }
+
+  const sleepers = graph.samples(0.7);
+  const sm = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.12, 0.32), mats.sleeper, sleepers.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const one = new THREE.Vector3(1, 1, 1);
+  sleepers.forEach(({ p, t }, i) => {
+    q.setFromAxisAngle(Y, Math.atan2(t.x, t.z));
+    m.compose(new THREE.Vector3(p.x, p.y + 0.31, p.z), q, one);
+    sm.setMatrixAt(i, m);
+  });
+  sm.receiveShadow = true;
+  group.add(sm);
+
+  // Pillars under raised track, except where they would stand on a lower track.
+  const low = graph.samples(1).filter(({ p }) => p.y < 1.5).map(({ p }) => p);
+  const pillars = graph.samples(5).filter(({ p }) => p.y > 0.8 && !low.some((l) => Math.hypot(l.x - p.x, l.z - p.z) < 2.6));
+  if (pillars.length) {
+    const pm = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.45, 0.55, 1, 10), mats.pillar, pillars.length);
+    pillars.forEach(({ p }, i) => {
+      const h = p.y - 0.6;
+      m.compose(new THREE.Vector3(p.x, h / 2, p.z), new THREE.Quaternion(), new THREE.Vector3(1, h, 1));
+      pm.setMatrixAt(i, m);
+    });
+    pm.castShadow = true;
+    group.add(pm);
+  }
+
+  // Buffer stops at every track end, facing outwards.
+  for (const n of graph.nodes.values()) {
+    if (n.edges.length !== 1) continue;
+    const e = graph.edges[n.edges[0]];
+    const out = graph.tangentOn(e.index, e.a === n.id ? 0 : e.length);
+    if (e.a === n.id) out.negate();
+    group.add(bufferStop(n.p.clone().addScaledVector(out, 0.6), out));
+  }
+
+  const trackPts = graph.samples(2).map(({ p }) => p);
+  const houses: { p: THREE.Vector3; r: number; size: number }[] = [];
+  for (const st of track.stations) {
+    const n = graph.nodes.get(st.node);
+    if (!n) continue;
+    group.add(platform(n.p, n.tangent, trackPts));
+    group.add(label(st.name, n.p.clone().add(new THREE.Vector3(0, 16, 0))));
+    houses.push(...townHouses(n.p, st.name, trackPts, houses));
+  }
+  if (houses.length) group.add(...houseMeshes(houses));
+
+  return { group, beds, dispose: () => disposeTree(group) };
+}
+
+function bufferStop(p: THREE.Vector3, out: THREE.Vector3) {
+  const g = frameAt(p, out);
   box(g, [2.2, 0.5, 0.4], mats.buffer, 0, 1.1, 0);
-  for (const x of [-0.6, 0.6]) box(g, [0.2, 0.9, 0.2], mats.post, x, 0.7, -dir * 0.3);
+  for (const x of [-0.6, 0.6]) box(g, [0.2, 0.9, 0.2], mats.post, x, 0.7, 0.3);
   return g;
 }
 
-function platform(path: TrackPath, s: number) {
-  const g = frameAt(path, s);
-  // Platform on the right-hand side (−x in local space, since +z is the direction of travel).
-  box(g, [3, 0.9, PLATFORM], mats.platform, -3.3, 0.05, 0);
-  box(g, [0.25, 0.04, PLATFORM], mats.edge, -1.95, 0.52, 0);
+/** Platform, canopy and station house on the side of the track with more room. */
+function platform(p: THREE.Vector3, tangent: THREE.Vector3, trackPts: THREE.Vector3[]) {
+  const g = frameAt(p, tangent);
+  const left = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize(); // local +x
+  const room = (sign: number) =>
+    Math.min(...[-6, 0, 6].map((dz) => {
+      const c = p.clone().addScaledVector(left, sign * 6).addScaledVector(tangent, dz);
+      return Math.min(...trackPts.map((q) => Math.hypot(q.x - c.x, q.z - c.z)));
+    }));
+  const side = room(1) > room(-1) + 0.5 ? 1 : -1;
+  box(g, [3, 0.9, PLATFORM], mats.platform, side * 3.3, 0.05, 0);
+  box(g, [0.25, 0.04, PLATFORM], mats.edge, side * 1.95, 0.52, 0);
   for (const z of [-6, 0, 6]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.6), mats.post);
-    post.position.set(-4.1, 1.8, z);
+    post.position.set(side * 4.1, 1.8, z);
     post.castShadow = true;
     g.add(post);
   }
-  box(g, [2.6, 0.15, 14], mats.roof, -3.6, 3.15, 0);
-  box(g, [5, 3.2, 6], mats.house, -7.6, 1.6, 0).material = new THREE.MeshStandardMaterial({ color: 0xf3dfc1, roughness: 0.9 });
+  box(g, [2.6, 0.15, 14], mats.roof, side * 3.6, 3.15, 0);
+  box(g, [5, 3.2, 6], mats.stationHouse, side * 7.6, 1.6, 0);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 2.2, 4), mats.roof);
   roof.geometry.rotateY(Math.PI / 4);
   roof.scale.set(0.8, 1, 0.95);
-  roof.position.set(-7.6, 4.3, 0);
+  roof.position.set(side * 7.6, 4.3, 0);
   roof.castShadow = true;
   g.add(roof);
   return g;
@@ -206,9 +230,8 @@ function label(text: string, at: THREE.Vector3) {
   return sprite;
 }
 
-function townHouses(path: TrackPath, s: number, name: string, trackPts: THREE.Vector3[], taken: { p: THREE.Vector3 }[]) {
+function townHouses(center: THREE.Vector3, name: string, trackPts: THREE.Vector3[], taken: { p: THREE.Vector3 }[]) {
   const r = rng(hash(name));
-  const center = path.pointAt(s);
   const out: { p: THREE.Vector3; r: number; size: number }[] = [];
   for (let k = 0; k < 60 && out.length < 16; k++) {
     const a = r() * Math.PI * 2, d = 12 + r() * 26;
@@ -229,7 +252,6 @@ function houseMeshes(houses: { p: THREE.Vector3; r: number; size: number }[]) {
   const roof = new THREE.InstancedMesh(roofGeo, mats.houseRoof, houses.length);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const Y = new THREE.Vector3(0, 1, 0);
   const color = new THREE.Color();
   houses.forEach(({ p, r, size }, i) => {
     q.setFromAxisAngle(Y, r);
@@ -245,28 +267,64 @@ function houseMeshes(houses: { p: THREE.Vector3; r: number; size: number }[]) {
   return [body, roof];
 }
 
-/** A light signal at the right of the track; green or red. */
+/**
+ * Shows how every switch is set: a yellow strip on the first metres of the branch it leads to,
+ * and a lever beside it. Levers carry userData.switchNode so taps can find them.
+ */
+export function buildSwitches(graph: TrackGraph, switches: Switches) {
+  const group = new THREE.Group();
+  const levers: THREE.Object3D[] = [];
+  for (const n of graph.nodes.values()) {
+    if (!n.branches) continue;
+    const state = switches[n.id] ?? 0;
+    const edge = graph.edges[n.branches[state]];
+    const atA = edge.a === n.id;
+    const len = Math.min(10, edge.length * 0.6);
+    const strip = new THREE.Mesh(sweep(graph, edge.index, 0.5, [[-0.35, 0.52], [0.35, 0.52]], atA ? 0 : edge.length, atA ? len : edge.length - len), mats.route);
+    group.add(strip);
+
+    // Lever on the side away from the diverging branch.
+    const div = graph.edges[n.branches[1]];
+    const divDir = graph.pointOn(div.index, div.a === n.id ? Math.min(8, div.length) : div.length - Math.min(8, div.length)).sub(n.p);
+    const left = new THREE.Vector3(n.tangent.z, 0, -n.tangent.x).normalize();
+    const side = divDir.dot(left) > 0 ? -1 : 1;
+    const lever = frameAt(n.p.clone().addScaledVector(left, side * 3), n.tangent);
+    box(lever, [0.9, 0.5, 0.9], mats.lever, 0, 0.35, 0);
+    const handle = box(lever, [0.18, 1.6, 0.18], state ? mats.route : mats.buffer, 0, 1.1, 0);
+    handle.rotation.z = (state ? -1 : 1) * side * 0.5;
+    // A larger invisible target makes the lever easy to tap.
+    const target = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
+    target.position.y = 1;
+    lever.add(target);
+    lever.traverse((o) => (o.userData.switchNode = n.id));
+    levers.push(lever);
+    group.add(lever);
+  }
+  return { group, levers, dispose: () => disposeTree(group) };
+}
+
+/** A light signal at the right of the track for trains running along `travel`. */
 export class Signal {
   readonly group: THREE.Group;
   private red = new THREE.MeshStandardMaterial({ color: 0x400000, emissive: 0xff2010, emissiveIntensity: 0 });
   private green = new THREE.MeshStandardMaterial({ color: 0x003000, emissive: 0x20ff40, emissiveIntensity: 0 });
   private state: boolean | null = null;
 
-  constructor(path: TrackPath, s: number, dir: 1 | -1) {
-    this.group = frameAt(path, s);
-    if (dir < 0) this.group.rotation.y += Math.PI;
+  constructor(p: THREE.Vector3, travel: THREE.Vector3) {
+    this.group = frameAt(p, travel);
     const g = this.group;
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 4.2), mats.post);
     mast.position.set(-2.2, 2.1, 0);
     mast.castShadow = true;
     g.add(mast);
-    box(g, [0.6, 1.3, 0.4], new THREE.MeshStandardMaterial({ color: 0x202124 }), -2.2, 4.4, 0);
+    box(g, [0.6, 1.3, 0.4], mats.lever, -2.2, 4.4, 0);
     const lamp = new THREE.SphereGeometry(0.2, 12, 8);
     const r = new THREE.Mesh(lamp, this.red);
     r.position.set(-2.2, 4.75, -0.22); // facing the approaching driver
     const gr = new THREE.Mesh(lamp, this.green);
     gr.position.set(-2.2, 4.1, -0.22);
     g.add(r, gr);
+    this.set(false);
   }
 
   set(clear: boolean) {
@@ -279,7 +337,7 @@ export class Signal {
   }
 
   dispose() {
-    dispose(this.group);
+    disposeTree(this.group);
     this.red.dispose();
     this.green.dispose();
   }

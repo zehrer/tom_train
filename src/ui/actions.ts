@@ -1,6 +1,4 @@
-import { addPoint, deletePoint, raise, setCamera, setMode, stepSpeed, stepWagons, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
-
-export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+import { addTrack, clearSelection, deleteSelected, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, toggleSwitch, useStore } from "../model/store";
 
 export function enterFullscreen() {
   document.documentElement.requestFullscreen?.().catch(() => {});
@@ -12,11 +10,14 @@ export const SHORTCUTS: { keys: string; label: string; mode?: "editor" | "simula
   { keys: "S", label: "Simulator mode" },
   { keys: "Space", label: "Start / stop the train", mode: "simulator" },
   { keys: "↑ / ↓", label: "Faster / slower", mode: "simulator" },
+  { keys: "W", label: "Turn the next switch ahead", mode: "simulator" },
   { keys: "1 / 2 / 3", label: "Cab / follow / overview camera", mode: "simulator" },
   { keys: "+ / −", label: "Add / remove a wagon", mode: "simulator" },
-  { keys: "A", label: "Add a point after the selected one", mode: "editor" },
-  { keys: "⌫", label: "Delete the selected point", mode: "editor" },
+  { keys: "A", label: "New track from the selected point, or split the selected track", mode: "editor" },
+  { keys: "C", label: "Connect the selected point to another one", mode: "editor" },
+  { keys: "W", label: "Turn the selected switch", mode: "editor" },
   { keys: "T", label: "Station with a town at the selected point", mode: "editor" },
+  { keys: "⌫", label: "Delete the selected point or track", mode: "editor" },
   { keys: "PgUp / PgDn", label: "Raise / lower the selected point", mode: "editor" },
   { keys: "Esc", label: "Clear the selection", mode: "editor" },
   { keys: "?", label: "Keyboard shortcuts" },
@@ -44,12 +45,15 @@ export function onKey(e: KeyboardEvent) {
     if (k === "3") return run(() => setCamera("overview"));
     if (k === "+" || k === "=") return run(() => stepWagons(1));
     if (k === "-") return run(() => stepWagons(-1));
+    if (k === "w" || k === "W") return run(toggleNextSwitch);
   } else {
-    if (k === "a" || k === "A") return run(addPoint);
-    if (k === "Backspace" || k === "Delete") return run(deletePoint);
+    if (k === "a" || k === "A") return run(addTrack);
+    if (k === "c" || k === "C") return run(startConnect);
+    if (k === "w" || k === "W") return run(() => s.selected?.kind === "node" && toggleSwitch(s.selected.id));
+    if (k === "Backspace" || k === "Delete") return run(deleteSelected);
     if (k === "t" || k === "T") return run(toggleStationAtSelection);
     if (k === "PageUp") return run(() => raise(0.5));
     if (k === "PageDown") return run(() => raise(-0.5));
-    if (k === "Escape") return run(() => useStore.setState({ selected: null }));
+    if (k === "Escape") return run(clearSelection);
   }
 }

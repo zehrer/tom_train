@@ -18,7 +18,11 @@
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); }
 button, input, select { font: inherit; color: inherit; }
-button { cursor: pointer; }
+button { cursor: pointer; touch-action: manipulation; }
+/* An app, not a page: no text selection or callouts while tapping and dragging. */
+.app { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+input { -webkit-user-select: text; user-select: text; }
+a { color: var(--accent); }
 button:disabled { cursor: default; opacity: 0.4; }
 
 .app { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
@@ -70,6 +74,7 @@ main { flex: 1; min-height: 0; position: relative; margin: 0 16px 16px; border-r
 .toolbar .spacer { flex: 1; }
 .toolbar .label { color: var(--muted); padding: 0 2px 0 4px; }
 .toolbar .accent { color: var(--accent); font-weight: 500; }
+.toolbar .switch-btn { background: var(--surface); }
 .toolbar > button.on { background: var(--accent-soft); color: #041e49; }
 .name-input { border: 0; border-radius: 16px; padding: 6px 12px; background: var(--surface); width: 140px; }
 .name-input:focus { outline: 2px solid var(--accent); }
@@ -80,6 +85,7 @@ main { flex: 1; min-height: 0; position: relative; margin: 0 16px 16px; border-r
 .stepper { display: flex; align-items: center; background: var(--surface); border-radius: 16px; padding: 2px; }
 .stepper button { border: 0; background: none; border-radius: 50%; width: 28px; height: 28px; padding: 0; font-size: 16px; }
 .stepper button:hover:not(:disabled) { background: var(--hover); }
+.stepper .value.short { min-width: 36px; }
 .stepper .value { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
 .segmented { display: flex; background: var(--surface); border-radius: 16px; padding: 2px; flex: none; }
 .segmented button { border: 0; background: none; border-radius: 14px; padding: 0 12px; height: 32px; }
@@ -112,9 +118,28 @@ main { flex: 1; min-height: 0; position: relative; margin: 0 16px 16px; border-r
 .dialog-actions button { border: 0; background: none; color: var(--accent); font-weight: 500; padding: 8px 14px; border-radius: 16px; }
 .dialog-actions button:hover { background: var(--accent-soft); }
 
+/* Narrow screens (iPad upright): the toolbar wraps onto a second row instead of hiding buttons. */
+@media (max-width: 1000px) {
+  .toolbar { flex-wrap: wrap; overflow-x: visible; border-radius: 22px; row-gap: 6px; padding: 6px 8px; }
+  .toolbar .spacer { display: none; }
+}
+
 @media (max-width: 640px) {
   .header { padding: 6px 12px 2px; }
   .subtitle { display: none; }
   .toolbar { margin: 4px 12px 6px; }
   main { margin: 0 12px 12px; }
+}
+
+/* Touch screens (iPad): larger targets, the toolbar scrolls sideways instead of wrapping. */
+@media (pointer: coarse) {
+  .menubar button { padding: 6px 10px; }
+  .menu > button { padding: 12px 18px; }
+  .toolbar { min-height: 54px; gap: 6px; scrollbar-width: none; }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .toolbar > button, .toolbar select { height: 42px; padding: 4px 16px; }
+  .stepper button { width: 40px; height: 40px; font-size: 20px; }
+  .segmented button { height: 42px; padding: 0 16px; }
+  .name-input { padding: 10px 14px; }
+  .dialog-actions button { padding: 12px 18px; }
 }

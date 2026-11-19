@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { addPoint, deletePoint, loadPreset, MAX_WAGONS, raise, setCamera, setMode, setTrackClosed, stepSpeed, stepWagons, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
-import { MIN_POINTS, minPoints, PRESETS } from "../model/track";
+import { addTrack, deleteSelected, loadPreset, MAX_WAGONS, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
+import { PRESETS } from "../model/track";
 import { enterFullscreen } from "./actions";
+
+export const LIVE_URL = "https://zehrer.github.io/tom_train/";
+export const REPO_URL = "https://github.com/zehrer/tom_train";
 
 type Item = "-" | { heading: string } | { label: string; shortcut?: string; disabled?: boolean; action: () => void };
 
@@ -30,14 +33,12 @@ export function Header() {
           action: () => confirm(`Replace the current track with "${p.name}"?`) && loadPreset(p.id),
         })),
         "-",
-        { label: "Add point", shortcut: "A", disabled: !editor, action: addPoint },
-        { label: "Delete point", shortcut: "⌫", disabled: !editor || s.selected === null || s.track.points.length <= minPoints(s.track), action: deletePoint },
-        { label: "Raise point", shortcut: "PgUp", disabled: !editor || s.selected === null, action: () => raise(0.5) },
-        { label: "Lower point", shortcut: "PgDn", disabled: !editor || s.selected === null, action: () => raise(-0.5) },
-        { label: "Station at point", shortcut: "T", disabled: !editor || s.selected === null, action: toggleStationAtSelection },
-        "-",
-        { label: check(s.track.closed, "Loop"), disabled: s.track.points.length < MIN_POINTS, action: () => setTrackClosed(true) },
-        { label: check(!s.track.closed, "Line (train shuttles)"), action: () => setTrackClosed(false) },
+        { label: "New track / split track", shortcut: "A", disabled: !editor || !s.selected, action: addTrack },
+        { label: "Connect to another point", shortcut: "C", disabled: !editor || s.selected?.kind !== "node", action: startConnect },
+        { label: "Delete", shortcut: "⌫", disabled: !editor || !s.selected, action: deleteSelected },
+        { label: "Raise point", shortcut: "PgUp", disabled: !editor || s.selected?.kind !== "node", action: () => raise(0.5) },
+        { label: "Lower point", shortcut: "PgDn", disabled: !editor || s.selected?.kind !== "node", action: () => raise(-0.5) },
+        { label: "Station at point", shortcut: "T", disabled: !editor || s.selected?.kind !== "node", action: toggleStationAtSelection },
       ],
     },
     {
@@ -46,6 +47,7 @@ export function Header() {
         { label: s.running ? "Stop" : "Start", shortcut: "Space", disabled: editor, action: toggleRunning },
         { label: "Faster", shortcut: "↑", disabled: editor, action: () => stepSpeed(1) },
         { label: "Slower", shortcut: "↓", disabled: editor, action: () => stepSpeed(-1) },
+        { label: "Turn the next switch", shortcut: "W", disabled: editor || !s.live.nextSwitch, action: toggleNextSwitch },
         "-",
         { label: "Add wagon", shortcut: "+", disabled: s.wagons >= MAX_WAGONS, action: () => stepWagons(1) },
         { label: "Remove wagon", shortcut: "−", disabled: s.wagons <= 0, action: () => stepWagons(-1) },
@@ -66,6 +68,9 @@ export function Header() {
       label: "Help",
       items: [
         { label: "Keyboard shortcuts", shortcut: "?", action: () => useStore.setState({ dialog: "keys" }) },
+        { label: "Open the live app", action: () => window.open(LIVE_URL, "_blank", "noopener") },
+        { label: "Source code on GitHub", action: () => window.open(REPO_URL, "_blank", "noopener") },
+        "-",
         { label: "About tom_train", action: () => useStore.setState({ dialog: "about" }) },
       ],
     },
