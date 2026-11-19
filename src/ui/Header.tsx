@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { addTrack, deleteSelected, loadPreset, MAX_WAGONS, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
+import { addTrack, deleteSelected, isDirty, MAX_WAGONS, renameTrack, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
 import { PRESETS } from "../model/track";
-import { enterFullscreen } from "./actions";
+import { enterFullscreen, MOD } from "./actions";
+import { exportHTML, importFromPicker, newTrack, save, saveAs, showOpen } from "./files";
 
 export const LIVE_URL = "https://zehrer.github.io/tom_train/";
 export const REPO_URL = "https://github.com/zehrer/tom_train";
@@ -17,6 +18,20 @@ export function Header() {
 
   const menus: { label: string; items: Item[] }[] = [
     {
+      label: "File",
+      items: [
+        { heading: "New track from a template" },
+        ...PRESETS.map((p) => ({ label: `\u2003${p.name}`, action: () => newTrack(p.id) })),
+        "-",
+        { label: "Open…", shortcut: `${MOD}O`, action: showOpen },
+        { label: "Save", shortcut: `${MOD}S`, action: save },
+        { label: "Save as…", action: saveAs },
+        "-",
+        { label: "Export as HTML (map + track, opens in any browser)", action: exportHTML },
+        { label: "Import (HTML or JSON)…", action: importFromPicker },
+      ],
+    },
+    {
       label: "Mode",
       items: [
         { label: check(editor, "Editor"), shortcut: "E", action: () => setMode("editor") },
@@ -27,12 +42,6 @@ export function Header() {
     {
       label: "Track",
       items: [
-        { heading: "Start from a template" },
-        ...PRESETS.map((p) => ({
-          label: `${p.name}…`,
-          action: () => confirm(`Replace the current track with "${p.name}"?`) && loadPreset(p.id),
-        })),
-        "-",
         { label: "New track / split track", shortcut: "A", disabled: !editor || !s.selected, action: addTrack },
         { label: "Connect to another point", shortcut: "C", disabled: !editor || s.selected?.kind !== "node", action: startConnect },
         { label: "Delete", shortcut: "⌫", disabled: !editor || !s.selected, action: deleteSelected },
@@ -81,8 +90,9 @@ export function Header() {
       <Logo />
       <div className="title-block">
         <div className="title-row">
-          <span className="title">tom_train</span>
+          <input className="title" value={s.name} onChange={(e) => renameTrack(e.target.value)} aria-label="Track name" placeholder="Untitled track" />
           <span className="subtitle">{editor ? "Track editor" : "Simulator"}</span>
+          <span className="save-status">{isDirty(s) ? (s.libraryId ? "Unsaved changes" : "Not saved") : "Saved"}</span>
         </div>
         <nav className="menubar">
           {menus.map((m, i) => (

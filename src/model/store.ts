@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import { connect, extend, moveNode, parseTrack, preset, raiseNode, removeEdge, removeNode, renameStation, split, toggleStation, type PresetId, type Switches, type Track } from "./track";
+import type { TrackFile } from "./files";
+import { loadLibrary, newId, storeLibrary, uniqueName, type SavedTrack } from "./library";
+import { connect, extend, moveNode, parseTrack, preset, PRESETS, raiseNode, removeEdge, removeNode, renameStation, split, toggleStation, type PresetId, type Switches, type Track } from "./track";
 
 /** "game" (a small economy) comes later; the rest of the app switches on this value. */
 export type Mode = "editor" | "simulator";
@@ -12,8 +14,16 @@ export const MAX_WAGONS = 8;
 
 export interface State {
   mode: Mode;
+  /** Name of the track being worked on. */
+  name: string;
   track: Track;
   switches: Switches;
+  /** The library entry the track was opened from or saved to; null for a new, unsaved track. */
+  libraryId: string | null;
+  library: SavedTrack[];
+  /** Track and switches as last saved or opened; anything else counts as unsaved changes. */
+  savedTrack: Track | null;
+  savedSwitches: Switches | null;
   selected: Selection;
   /** While set, the next point chosen is joined to this one. */
   connectFrom: number | null;
@@ -22,7 +32,7 @@ export interface State {
   running: boolean;
   wagons: number;
   camera: CameraMode;
-  dialog: null | "keys" | "about";
+  dialog: null | "keys" | "about" | "open";
   /** Live values reported by the simulation for the status display. */
   live: {
     kmh: number;
@@ -45,6 +55,8 @@ function load(): Partial<State> {
       for (const [k, val] of Object.entries(v.switches)) if (val === 0 || val === 1) switches[Number(k)] = val;
     }
     return {
+      name: typeof v.name === "string" ? v.name : undefined,
+      libraryId: typeof v.libraryId === "string" ? v.libraryId : undefined,
       track: parseTrack(v.track) ?? undefined,
       switches,
       wagons: Number.isInteger(v.wagons) ? Math.min(MAX_WAGONS, Math.max(0, v.wagons)) : undefined,
@@ -58,10 +70,22 @@ function load(): Partial<State> {
 
 const saved = typeof localStorage === "undefined" ? {} : load();
 
+const library = typeof localStorage === "undefined" ? [] : loadLibrary();
+const startTrack = saved.track ?? preset("network");
+const startSwitches = saved.switches ?? {};
+const entry = library.find((e) => e.id === saved.libraryId);
+// The working track counts as saved if it still matches its library entry.
+const unchanged = !!entry && JSON.stringify([entry.track, entry.switches]) === JSON.stringify([startTrack, startSwitches]);
+
 export const useStore = create<State>(() => ({
   mode: "simulator",
-  track: saved.track ?? preset("network"),
-  switches: saved.switches ?? {},
+  name: saved.name ?? PRESETS[0].name,
+  track: startTrack,
+  switches: startSwitches,
+  libraryId: entry ? entry.id : null,
+  library,
+  savedTrack: unchanged ? startTrack : null,
+  savedSwitches: unchanged ? startSwitches : null,
   selected: null,
   connectFrom: null,
   speed: saved.speed ?? 50,
@@ -73,9 +97,13 @@ export const useStore = create<State>(() => ({
 }));
 
 useStore.subscribe((s, prev) => {
-  if (s.track === prev.track && s.switches === prev.switches && s.wagons === prev.wagons && s.camera === prev.camera && s.speed === prev.speed) return;
+  const keys = ["track", "switches", "wagons", "camera", "speed", "name", "libraryId"] as const;
+  if (keys.every((k) => s[k] === prev[k])) return;
   try {
-    localStorage.setItem(KEY, JSON.stringify({ track: s.track, switches: s.switches, wagons: s.wagons, camera: s.camera, speed: s.speed }));
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ track: s.track, switches: s.switches, wagons: s.wagons, camera: s.camera, speed: s.speed, name: s.name, libraryId: s.libraryId }),
+    );
   } catch {
     /* storage unavailable: settings just aren't remembered */
   }
@@ -109,7 +137,61 @@ const selectedNode = () => {
   return s?.kind === "node" ? s.id : null;
 };
 
-export const loadPreset = (id: PresetId) => set({ track: preset(id), switches: {}, selected: null, connectFrom: null });
+// --- Files and library -----------------------------------------------------------------------
+
+export const isDirty = (s: State) => s.track !== s.savedTrack || s.switches !== s.savedSwitches;
+
+const fresh = { selected: null, connectFrom: null } as const;
+
+/** Starts a new, unsaved track from a template. */
+export function newFromPreset(id: PresetId) {
+  set({ ...fresh, track: preset(id), switches: {}, name: PRESETS.find((p) => p.id === id)!.name, libraryId: null, savedTrack: null, savedSwitches: null });
+}
+
+export const renameTrack = (name: string) => set({ name });
+
+function putLibrary(list: SavedTrack[]) {
+  if (!storeLibrary(list)) throw new Error("The browser refused to save (storage full or blocked).");
+  set({ library: list });
+}
+
+/** Saves to the track's library entry, or as a new entry when it has none. */
+export function saveTrack() {
+  const s = get();
+  if (!s.libraryId || !s.library.some((e) => e.id === s.libraryId)) return saveTrackAs(s.name);
+  const name = uniqueName(s.library, s.name, s.libraryId);
+  putLibrary(s.library.map((e) => (e.id === s.libraryId ? { ...e, name, track: s.track, switches: s.switches, saved: new Date().toISOString() } : e)));
+  set({ name, savedTrack: s.track, savedSwitches: s.switches });
+}
+
+/** Saves as a new library entry under `name` (numbered if the name is taken). */
+export function saveTrackAs(name: string) {
+  const s = get();
+  const entry: SavedTrack = { id: newId(), name: uniqueName(s.library, name), track: s.track, switches: s.switches, saved: new Date().toISOString() };
+  putLibrary([...s.library, entry]);
+  set({ name: entry.name, libraryId: entry.id, savedTrack: s.track, savedSwitches: s.switches });
+}
+
+export function openSaved(id: string) {
+  const e = get().library.find((x) => x.id === id);
+  if (!e) return;
+  set({ ...fresh, name: e.name, track: e.track, switches: e.switches, libraryId: e.id, savedTrack: e.track, savedSwitches: e.switches, dialog: null });
+}
+
+export function deleteSaved(id: string) {
+  const s = get();
+  putLibrary(s.library.filter((e) => e.id !== id));
+  // The open track stays; it just isn't saved anywhere any more.
+  if (s.libraryId === id) set({ libraryId: null, savedTrack: null, savedSwitches: null });
+}
+
+/** Adds an imported track to the library and opens it. */
+export function importTrack(file: TrackFile) {
+  const s = get();
+  const entry: SavedTrack = { id: newId(), name: uniqueName(s.library, file.name), track: file.track, switches: file.switches, saved: new Date().toISOString() };
+  putLibrary([...s.library, entry]);
+  openSaved(entry.id);
+}
 
 /** A tap on a point: selects it, or finishes "connect" by joining the two points. */
 export function pickNode(id: number) {

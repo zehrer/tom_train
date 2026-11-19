@@ -1,4 +1,7 @@
+import { save, showOpen } from "./files";
 import { addTrack, clearSelection, deleteSelected, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, toggleSwitch, useStore } from "../model/store";
+
+export const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
 export function enterFullscreen() {
   document.documentElement.requestFullscreen?.().catch(() => {});
@@ -20,10 +23,15 @@ export const SHORTCUTS: { keys: string; label: string; mode?: "editor" | "simula
   { keys: "⌫", label: "Delete the selected point or track", mode: "editor" },
   { keys: "PgUp / PgDn", label: "Raise / lower the selected point", mode: "editor" },
   { keys: "Esc", label: "Clear the selection", mode: "editor" },
+  { keys: `${MOD}S / ${MOD}O`, label: "Save / open a saved track" },
   { keys: "?", label: "Keyboard shortcuts" },
 ];
 
 export function onKey(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.key === "s" || e.key === "o")) {
+    e.preventDefault();
+    return e.key === "s" ? save() : showOpen();
+  }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if ((e.target as HTMLElement).closest("input, select, textarea")) return;
   const s = useStore.getState();

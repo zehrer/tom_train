@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useStore } from "../model/store";
 import { onKey } from "./actions";
+import { acceptHandover } from "./files";
 import { Dialogs } from "./Dialogs";
 import { Header } from "./Header";
 import { Scene } from "./Scene";
@@ -11,6 +12,7 @@ export function App() {
   const mode = useStore((s) => s.mode);
   useEffect(() => {
     window.addEventListener("keydown", onKey);
+    acceptHandover();
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   return (

@@ -1,4 +1,5 @@
-import { useStore } from "../model/store";
+import { deleteSaved, isDirty, openSaved, useStore } from "../model/store";
+import { importFromPicker } from "./files";
 import { SHORTCUTS } from "./actions";
 import { LIVE_URL, Logo, REPO_URL } from "./Header";
 
@@ -9,7 +10,9 @@ export function Dialogs() {
   return (
     <div className="dialog-backdrop" onClick={close}>
       <div className="dialog" role="dialog" onClick={(e) => e.stopPropagation()}>
-        {dialog === "keys" ? (
+        {dialog === "open" ? (
+          <OpenList />
+        ) : dialog === "keys" ? (
           <>
             <h2>Keyboard shortcuts</h2>
             <table>
@@ -38,5 +41,43 @@ export function Dialogs() {
         <div className="dialog-actions"><button onClick={close}>Close</button></div>
       </div>
     </div>
+  );
+}
+
+function OpenList() {
+  const library = useStore((s) => s.library);
+  const current = useStore((s) => s.libraryId);
+  const sorted = [...library].sort((a, b) => b.saved.localeCompare(a.saved));
+  const open = (id: string, name: string) => {
+    const s = useStore.getState();
+    if (id !== current && isDirty(s) && !confirm(`The track "${s.name}" has unsaved changes. Open "${name}" anyway?`)) return;
+    openSaved(id);
+  };
+  return (
+    <>
+      <h2>Open a saved track</h2>
+      {sorted.length === 0 ? (
+        <p className="muted">No saved tracks yet. Use File → Save, or import an exported HTML file.</p>
+      ) : (
+        <ul className="library">
+          {sorted.map((e) => (
+            <li key={e.id} className={e.id === current ? "current" : ""}>
+              <button className="lib-open" onClick={() => open(e.id, e.name)}>
+                <span className="lib-name">{e.name}</span>
+                <span className="muted">
+                  {e.track.stations.length} towns · {e.saved ? new Date(e.saved).toLocaleString() : ""}
+                </span>
+              </button>
+              <button className="lib-delete" title="Delete from the library" aria-label={`Delete ${e.name}`} onClick={() => confirm(`Delete "${e.name}" from the library? This can't be undone.`) && deleteSaved(e.id)}>
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="dialog-actions left">
+        <button onClick={() => (useStore.setState({ dialog: null }), importFromPicker())}>Import file…</button>
+      </div>
+    </>
   );
 }

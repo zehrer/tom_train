@@ -16,7 +16,11 @@ Build a railway in 3D and ride along in the driver's cab. Runs entirely in the b
 - **Touch (iPad)**: one finger turns the view, two fingers zoom and move it; points can be dragged with a finger; every action has a button.
 - **Planned**: block signals and several trains, and a game mode with a small economy.
 
-The track, switch positions and settings are saved in the browser (localStorage).
+## Saving, export and import
+
+- **File → Save / Save as… / Open…** (`⌘S` / `⌘O`): a library of named tracks kept in the browser. The working state is also kept between visits.
+- **File → Export as HTML**: one self-contained HTML file with a map of the track that opens in any browser (printable, easy to send). The track is embedded in the file; its **Open in tom_train** button hands it to the app.
+- **File → Import**: opens exported HTML files (or JSON) and adds them to the library.
 
 ## Development
 

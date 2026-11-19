@@ -1,7 +1,8 @@
 import {
-  addTrack, deleteSelected, loadPreset, MAX_SPEED, MAX_WAGONS, raise, renameSelectedStation, setCamera, SPEED_STEP, startConnect,
+  addTrack, deleteSelected, MAX_SPEED, MAX_WAGONS, raise, renameSelectedStation, setCamera, SPEED_STEP, startConnect,
   stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, toggleSwitch, useStore, type CameraMode,
 } from "../model/store";
+import { newTrack } from "./files";
 import { degree, MAX_DEGREE, MAX_HEIGHT, PRESETS, type PresetId } from "../model/track";
 
 const CAMERAS: { id: CameraMode; label: string; title: string }[] = [
@@ -63,11 +64,11 @@ export function EditorBar() {
         value=""
         onChange={(e) => {
           const p = PRESETS.find((x) => x.id === e.target.value);
-          if (p && confirm(`Replace the current track with "${p.name}"?`)) loadPreset(p.id as PresetId);
+          if (p) newTrack(p.id as PresetId);
         }}
-        title="Start from a template"
+        title="Start a new track from a template"
       >
-        <option value="" disabled>Template…</option>
+        <option value="" disabled>New from template…</option>
         {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       <span className="sep" />
