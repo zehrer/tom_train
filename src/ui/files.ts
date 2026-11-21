@@ -3,7 +3,9 @@ import { importTrack, isDirty, newFromPreset, saveTrack, saveTrackAs, useStore }
 import { PRESETS, type PresetId } from "../model/track";
 
 const state = () => useStore.getState();
-const appUrl = () => location.origin + location.pathname;
+const LIVE_URL = "https://zehrer.github.io/tom_train/";
+/** Exports point to the app they came from, but never to a local test server that may not be running. */
+const appUrl = () => (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) ? LIVE_URL : location.origin + location.pathname);
 
 function report(f: () => void) {
   try {

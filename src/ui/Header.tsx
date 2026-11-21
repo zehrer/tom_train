@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { addTrack, deleteSelected, isDirty, MAX_WAGONS, renameTrack, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
+import { activeTrain, addTrain, cycleTrain, MAX_TRAINS, removeTrain } from "../model/store";
+import { TRAIN_TYPES, trainType } from "../model/trains";
+import { addTrack, deleteSelected, isDirty, renameTrack, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, useStore } from "../model/store";
 import { PRESETS } from "../model/track";
 import { enterFullscreen, MOD } from "./actions";
 import { exportHTML, importFromPicker, newTrack, save, saveAs, showOpen } from "./files";
@@ -58,8 +60,13 @@ export function Header() {
         { label: "Slower", shortcut: "↓", disabled: editor, action: () => stepSpeed(-1) },
         { label: "Turn the next switch", shortcut: "W", disabled: editor || !s.live.nextSwitch, action: toggleNextSwitch },
         "-",
-        { label: "Add wagon", shortcut: "+", disabled: s.wagons >= MAX_WAGONS, action: () => stepWagons(1) },
-        { label: "Remove wagon", shortcut: "−", disabled: s.wagons <= 0, action: () => stepWagons(-1) },
+        { label: "Add wagon", shortcut: "+", disabled: activeTrain(s).wagons >= trainType(activeTrain(s).type).maxWagons, action: () => stepWagons(1) },
+        { label: "Remove wagon", shortcut: "−", disabled: activeTrain(s).wagons <= 0, action: () => stepWagons(-1) },
+        "-",
+        { heading: `Add a train (${s.trains.length} of ${MAX_TRAINS})` },
+        ...TRAIN_TYPES.map((t) => ({ label: `\u2003${t.name} · ${t.maxKmh} km/h`, disabled: s.trains.length >= MAX_TRAINS, action: () => addTrain(t.id) })),
+        { label: "Next train", shortcut: "N", disabled: s.trains.length < 2, action: () => cycleTrain(1) },
+        { label: "Remove this train", disabled: s.trains.length < 2, action: removeTrain },
       ],
     },
     {

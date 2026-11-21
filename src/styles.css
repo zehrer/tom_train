@@ -134,7 +134,7 @@ main { flex: 1; min-height: 0; position: relative; margin: 0 16px 16px; border-r
 .dialog-actions button:hover { background: var(--accent-soft); }
 
 /* Narrow screens (iPad upright): the toolbar wraps onto a second row instead of hiding buttons. */
-@media (max-width: 1000px) {
+@media (max-width: 1320px) {
   .toolbar { flex-wrap: wrap; overflow-x: visible; border-radius: 22px; row-gap: 6px; padding: 6px 8px; }
   .toolbar .spacer { display: none; }
 }

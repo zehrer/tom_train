@@ -1,4 +1,5 @@
 import { save, showOpen } from "./files";
+import { cycleTrain } from "../model/store";
 import { addTrack, clearSelection, deleteSelected, raise, setCamera, setMode, startConnect, stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, toggleSwitch, useStore } from "../model/store";
 
 export const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
@@ -16,6 +17,7 @@ export const SHORTCUTS: { keys: string; label: string; mode?: "editor" | "simula
   { keys: "W", label: "Turn the next switch ahead", mode: "simulator" },
   { keys: "1 / 2 / 3", label: "Cab / follow / overview camera", mode: "simulator" },
   { keys: "+ / −", label: "Add / remove a wagon", mode: "simulator" },
+  { keys: "N", label: "Next train (cameras and controls follow it)", mode: "simulator" },
   { keys: "A", label: "New track from the selected point, or split the selected track", mode: "editor" },
   { keys: "C", label: "Connect the selected point to another one", mode: "editor" },
   { keys: "W", label: "Turn the selected switch", mode: "editor" },
@@ -54,6 +56,7 @@ export function onKey(e: KeyboardEvent) {
     if (k === "+" || k === "=") return run(() => stepWagons(1));
     if (k === "-") return run(() => stepWagons(-1));
     if (k === "w" || k === "W") return run(toggleNextSwitch);
+    if (k === "n" || k === "N") return run(() => cycleTrain(1));
   } else {
     if (k === "a" || k === "A") return run(addTrack);
     if (k === "c" || k === "C") return run(startConnect);

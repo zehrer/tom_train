@@ -1,8 +1,9 @@
 import {
-  addTrack, deleteSelected, MAX_SPEED, MAX_WAGONS, raise, renameSelectedStation, setCamera, SPEED_STEP, startConnect,
+  activeTrain, addTrain, cycleTrain, MAX_TRAINS, removeTrain, setTrainType, addTrack, deleteSelected, MAX_SPEED, raise, renameSelectedStation, setCamera, SPEED_STEP, startConnect,
   stepSpeed, stepWagons, toggleNextSwitch, toggleRunning, toggleStationAtSelection, toggleSwitch, useStore, type CameraMode,
 } from "../model/store";
 import { newTrack } from "./files";
+import { TRAIN_TYPES, trainType, type TrainType } from "../model/trains";
 import { degree, MAX_DEGREE, MAX_HEIGHT, PRESETS, type PresetId } from "../model/track";
 
 const CAMERAS: { id: CameraMode; label: string; title: string }[] = [
@@ -14,6 +15,9 @@ const CAMERAS: { id: CameraMode; label: string; title: string }[] = [
 export function SimulatorBar() {
   const s = useStore();
   const sw = s.live.nextSwitch;
+  const train = activeTrain(s);
+  const info = trainType(train.type);
+  const index = s.trains.indexOf(train);
   return (
     <div className="toolbar">
       <button className={`play${s.running ? " on" : ""}`} onClick={toggleRunning} title="Start / stop (Space)">
@@ -27,11 +31,23 @@ export function SimulatorBar() {
         <button onClick={() => stepSpeed(1)} disabled={s.speed >= MAX_SPEED} title="Faster (↑)" aria-label="Faster">+</button>
       </div>
       <span className="sep" />
-      <span className="label">Wagons</span>
+      <span className="label">Train</span>
       <div className="stepper">
-        <button onClick={() => stepWagons(-1)} disabled={s.wagons <= 0} title="Remove a wagon (−)" aria-label="Remove a wagon">−</button>
-        <span className="value short">{s.wagons}</span>
-        <button onClick={() => stepWagons(1)} disabled={s.wagons >= MAX_WAGONS} title="Add a wagon (+)" aria-label="Add a wagon">+</button>
+        <button onClick={() => cycleTrain(-1)} disabled={s.trains.length < 2} title="Previous train" aria-label="Previous train">‹</button>
+        <span className="value">{index + 1} / {s.trains.length}</span>
+        <button onClick={() => cycleTrain(1)} disabled={s.trains.length < 2} title="Next train (N); you can also tap a train" aria-label="Next train">›</button>
+      </div>
+      <select value={train.type} onChange={(e) => setTrainType(e.target.value as TrainType)} title={`Type of this train (top speed ${info.maxKmh} km/h)`}>
+        {TRAIN_TYPES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+      <button className="accent" onClick={() => addTrain()} disabled={s.trains.length >= MAX_TRAINS} title={`Add another train (up to ${MAX_TRAINS})`}>+ Train</button>
+      <button onClick={removeTrain} disabled={s.trains.length < 2} title="Remove this train">Remove</button>
+      <span className="sep" />
+      <span className="label">{train.type === "express" ? "Cars" : "Wagons"}</span>
+      <div className="stepper">
+        <button onClick={() => stepWagons(-1)} disabled={train.wagons <= 0} title="Remove a wagon (−)" aria-label="Remove a wagon">−</button>
+        <span className="value short">{train.wagons}</span>
+        <button onClick={() => stepWagons(1)} disabled={train.wagons >= info.maxWagons} title="Add a wagon (+)" aria-label="Add a wagon">+</button>
       </div>
       <span className="sep" />
       <button className={`switch-btn${sw?.diverging ? " on" : ""}`} disabled={!sw} onClick={toggleNextSwitch} title="Turn the next switch ahead (W); you can also tap a switch lever">

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { degree, TrackGraph } from "../model/track";
-import { useStore } from "../model/store";
+import { activeTrain, useStore } from "../model/store";
+import { trainType } from "../model/trains";
 
 const touch = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 
@@ -13,6 +14,10 @@ export function Status() {
   const km = useStore((s) => s.live.distance);
   const at = useStore((s) => s.live.at);
   const next = useStore((s) => s.live.next);
+  const waiting = useStore((s) => s.live.waiting);
+  const notice = useStore((s) => s.notice);
+  const trains = useStore((s) => s.trains.length);
+  const typeName = useStore((s) => trainType(activeTrain(s).type).name);
   const info = useMemo(() => {
     const g = new TrackGraph(track);
     return {
@@ -40,9 +45,12 @@ export function Status() {
   }
   return (
     <div className="status">
+      {trains > 1 && <span>{typeName}</span>}
       <span className="speedo"><b>{kmh}</b> km/h</span>
       <span>{km.toFixed(2)} km</span>
       {at ? <span className="stop">At <b>{at}</b></span> : next && <span className="stop">Next stop: <b>{next}</b></span>}
+      {waiting && <span className="warn">Waiting for another train</span>}
+      {notice && <span className="warn">{notice}</span>}
     </div>
   );
 }

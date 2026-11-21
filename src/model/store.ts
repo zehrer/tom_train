@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { TrackFile } from "./files";
 import { loadLibrary, newId, storeLibrary, uniqueName, type SavedTrack } from "./library";
+import { isTrainType, TRAIN_TYPES, trainType, type TrainType } from "./trains";
 import { connect, extend, moveNode, parseTrack, preset, PRESETS, raiseNode, removeEdge, removeNode, renameStation, split, toggleStation, type PresetId, type Switches, type Track } from "./track";
 
 /** "game" (a small economy) comes later; the rest of the app switches on this value. */
@@ -8,9 +9,15 @@ export type Mode = "editor" | "simulator";
 export type CameraMode = "cab" | "follow" | "overview";
 export type Selection = { kind: "node"; id: number } | { kind: "edge"; index: number } | null;
 
-export const MAX_SPEED = 120;
+export const MAX_SPEED = 200;
 export const SPEED_STEP = 10;
-export const MAX_WAGONS = 8;
+export const MAX_TRAINS = 20;
+
+export interface TrainSpec {
+  id: number;
+  type: TrainType;
+  wagons: number;
+}
 
 export interface State {
   mode: Mode;
@@ -27,10 +34,14 @@ export interface State {
   selected: Selection;
   /** While set, the next point chosen is joined to this one. */
   connectFrom: number | null;
-  /** Target speed in km/h; the train accelerates and brakes towards it. */
+  /** Target speed in km/h; each train goes at most as fast as its type allows. */
   speed: number;
   running: boolean;
-  wagons: number;
+  trains: TrainSpec[];
+  /** The train the cameras, the switch button and the wagon count refer to. */
+  active: number;
+  /** A short message shown for a few seconds. */
+  notice: string | null;
   camera: CameraMode;
   dialog: null | "keys" | "about" | "open";
   /** Live values reported by the simulation for the status display. */
@@ -41,6 +52,8 @@ export interface State {
     next: string | null;
     /** The next switch the train passes from its trunk, where its way can be chosen. */
     nextSwitch: { node: number; diverging: boolean } | null;
+    /** Held up by another train. */
+    waiting: boolean;
   };
 }
 
@@ -54,12 +67,27 @@ function load(): Partial<State> {
     if (v.switches && typeof v.switches === "object") {
       for (const [k, val] of Object.entries(v.switches)) if (val === 0 || val === 1) switches[Number(k)] = val;
     }
+    let trains: TrainSpec[] | undefined;
+    if (Array.isArray(v.trains)) {
+      trains = v.trains
+        .filter((t: { type?: unknown }) => t && isTrainType(t.type))
+        .slice(0, MAX_TRAINS)
+        .map((t: { type: TrainType; wagons?: unknown }, i: number) => ({
+          id: i + 1,
+          type: t.type,
+          wagons: Number.isInteger(t.wagons) ? Math.min(trainType(t.type).maxWagons, Math.max(0, t.wagons as number)) : trainType(t.type).wagons,
+        }));
+      if (!trains!.length) trains = undefined;
+    } else if (Number.isInteger(v.wagons)) {
+      trains = [{ id: 1, type: "steam", wagons: Math.min(8, Math.max(0, v.wagons)) }];
+    }
     return {
+      trains,
+      active: trains && Number.isInteger(v.active) ? (trains[v.active]?.id ?? 1) : undefined,
       name: typeof v.name === "string" ? v.name : undefined,
       libraryId: typeof v.libraryId === "string" ? v.libraryId : undefined,
       track: parseTrack(v.track) ?? undefined,
       switches,
-      wagons: Number.isInteger(v.wagons) ? Math.min(MAX_WAGONS, Math.max(0, v.wagons)) : undefined,
       camera: ["cab", "follow", "overview"].includes(v.camera) ? v.camera : undefined,
       speed: Number.isFinite(v.speed) ? Math.min(MAX_SPEED, Math.max(SPEED_STEP, v.speed)) : undefined,
     };
@@ -90,19 +118,30 @@ export const useStore = create<State>(() => ({
   connectFrom: null,
   speed: saved.speed ?? 50,
   running: true,
-  wagons: saved.wagons ?? 4,
+  trains: saved.trains ?? [{ id: 1, type: "steam", wagons: 4 }],
+  active: saved.active ?? 1,
+  notice: null,
   camera: saved.camera ?? "cab",
   dialog: null,
-  live: { kmh: 0, distance: 0, at: null, next: null, nextSwitch: null },
+  live: { kmh: 0, distance: 0, at: null, next: null, nextSwitch: null, waiting: false },
 }));
 
 useStore.subscribe((s, prev) => {
-  const keys = ["track", "switches", "wagons", "camera", "speed", "name", "libraryId"] as const;
+  const keys = ["track", "switches", "trains", "active", "camera", "speed", "name", "libraryId"] as const;
   if (keys.every((k) => s[k] === prev[k])) return;
   try {
     localStorage.setItem(
       KEY,
-      JSON.stringify({ track: s.track, switches: s.switches, wagons: s.wagons, camera: s.camera, speed: s.speed, name: s.name, libraryId: s.libraryId }),
+      JSON.stringify({
+        track: s.track,
+        switches: s.switches,
+        trains: s.trains.map((t) => ({ type: t.type, wagons: t.wagons })),
+        active: Math.max(0, s.trains.findIndex((t) => t.id === s.active)),
+        camera: s.camera,
+        speed: s.speed,
+        name: s.name,
+        libraryId: s.libraryId,
+      }),
     );
   } catch {
     /* storage unavailable: settings just aren't remembered */
@@ -117,7 +156,67 @@ export const setCamera = (camera: CameraMode) => set({ camera });
 export const toggleRunning = () => set({ running: !get().running });
 export const stepSpeed = (dir: 1 | -1) =>
   set({ speed: Math.min(MAX_SPEED, Math.max(SPEED_STEP, get().speed + dir * SPEED_STEP)), running: true });
-export const stepWagons = (dir: 1 | -1) => set({ wagons: Math.min(MAX_WAGONS, Math.max(0, get().wagons + dir)) });
+
+// --- Trains ----------------------------------------------------------------------------------
+
+/** The train the controls refer to. */
+export const activeTrain = (s: State) => s.trains.find((t) => t.id === s.active) ?? s.trains[0];
+
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+export function showNotice(notice: string) {
+  set({ notice });
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => set({ notice: null }), 4000);
+}
+
+function updateActive(f: (t: TrainSpec) => TrainSpec) {
+  const s = get();
+  const a = activeTrain(s);
+  set({ trains: s.trains.map((t) => (t === a ? f(t) : t)) });
+}
+
+export const stepWagons = (dir: 1 | -1) =>
+  updateActive((t) => ({ ...t, wagons: Math.min(trainType(t.type).maxWagons, Math.max(0, t.wagons + dir)) }));
+
+/** A new train of `type` (default: the next type after the last train's), placed by the simulation. */
+export function addTrain(type?: TrainType) {
+  const s = get();
+  if (s.trains.length >= MAX_TRAINS) return showNotice(`At most ${MAX_TRAINS} trains`);
+  const last = s.trains[s.trains.length - 1];
+  const t = type ?? TRAIN_TYPES[(TRAIN_TYPES.findIndex((x) => x.id === last?.type) + 1) % TRAIN_TYPES.length].id;
+  const id = Math.max(0, ...s.trains.map((x) => x.id)) + 1;
+  set({ trains: [...s.trains, { id, type: t, wagons: trainType(t).wagons }], active: id });
+}
+
+/** Removes the active train (the last one stays). */
+export function removeTrain() {
+  const s = get();
+  if (s.trains.length <= 1) return;
+  const i = s.trains.findIndex((t) => t.id === s.active);
+  const trains = s.trains.filter((t) => t.id !== s.active);
+  set({ trains, active: trains[Math.min(Math.max(0, i), trains.length - 1)].id });
+}
+
+/** The simulation found no room for these trains. */
+export function dropTrains(ids: number[]) {
+  const s = get();
+  const trains = s.trains.filter((t) => !ids.includes(t.id));
+  if (!trains.length) return;
+  set({ trains, active: trains.some((t) => t.id === s.active) ? s.active : trains[trains.length - 1].id });
+  showNotice("No free place on the track for another train");
+}
+
+export const selectTrain = (id: number) => set({ active: id });
+
+export function cycleTrain(dir: 1 | -1) {
+  const s = get();
+  const i = s.trains.findIndex((t) => t.id === s.active);
+  set({ active: s.trains[(i + dir + s.trains.length) % s.trains.length].id });
+}
+
+export function setTrainType(type: TrainType) {
+  updateActive((t) => (t.type === type ? t : { ...t, type, wagons: trainType(type).wagons }));
+}
 
 export function toggleSwitch(node: number) {
   const { switches } = get();

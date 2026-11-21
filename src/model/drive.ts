@@ -18,6 +18,13 @@ export interface Step {
   fwd: boolean;
 }
 
+/** A piece of an edge a train covers, in edge coordinates (from node a). */
+export interface Interval {
+  edge: number;
+  s0: number;
+  s1: number;
+}
+
 export interface Stop {
   kind: "station" | "end";
   /** Town name; an end of the line is named after a station right before it. */
@@ -43,6 +50,8 @@ export class Driver {
   at: Stop | null = null;
   /** true while the loco is at the tail end, pushing. */
   flipped = false;
+  /** km/h per second; differs by train type. */
+  accel = ACCEL;
   private departing = false;
   private travelled = 0;
   private graph!: TrackGraph;
@@ -60,7 +69,7 @@ export class Driver {
     return this.graph.edges[st.edge].length;
   }
 
-  private endNode(st: Step) {
+  endNode(st: Step) {
     const e = this.graph.edges[st.edge];
     return st.fwd ? e.b : e.a;
   }
@@ -144,6 +153,70 @@ export class Driver {
 
   // --- Placing the train ----------------------------------------------------------------------
 
+  /** The pieces of track the train stands on. */
+  occupied(): Interval[] {
+    const out: Interval[] = [];
+    let rem = this.T, i = this.route.length - 1, end = this.h;
+    while (rem > 0 && i >= 0) {
+      const st = this.route[i], len = this.len(st);
+      const take = Math.min(end, rem);
+      const q0 = end - take, q1 = end;
+      out.push(st.fwd ? { edge: st.edge, s0: q0, s1: q1 } : { edge: st.edge, s0: len - q1, s1: len - q0 });
+      rem -= take;
+      if (--i >= 0) end = this.len(this.route[i]);
+    }
+    return out;
+  }
+
+  /** The steps ahead of the head (following the switches); start = distance from the head to the step's start. */
+  aheadSteps(max: number): { step: Step; start: number }[] {
+    const out = [{ step: this.head, start: -this.h }];
+    let st = this.head, start = this.len(st) - this.h;
+    while (start < max) {
+      const nx = this.nextStep(st);
+      if (!nx) break;
+      out.push({ step: nx, start });
+      start += this.len(nx);
+      st = nx;
+    }
+    return out;
+  }
+
+  /** Length of track under the train (less than its length if it hangs over the end). */
+  private covered() {
+    let c = this.h;
+    for (let k = 0; k < this.route.length - 1; k++) c += this.len(this.route[k]);
+    return c;
+  }
+
+  private reset() {
+    this.kmh = 0;
+    this.dwell = 1;
+    this.at = null;
+    this.flipped = false;
+    this.departing = false;
+  }
+
+  /** Puts the train with its tail at `node`, pointing out along `edge`. False if it doesn't fit. */
+  place(node: number, edge: number) {
+    this.route = [{ edge, fwd: this.graph.edges[edge].a === node }];
+    this.h = 0;
+    this.advance(this.T + (this.graph.degree(node) === 1 ? END_GAP : 0));
+    this.fillBehind();
+    this.reset();
+    return this.covered() >= this.T - 0.01;
+  }
+
+  /** Puts the train centred on an edge. False if it doesn't fit. */
+  placeMid(edge: number, fwd: boolean) {
+    const len = this.graph.edges[edge].length;
+    this.route = [{ edge, fwd }];
+    this.h = Math.min(len, (len + this.T) / 2);
+    this.fillBehind();
+    this.reset();
+    return this.covered() >= this.T - 0.01;
+  }
+
   /** Moves the head forward without any stopping logic. */
   private advance(ds: number) {
     this.h += ds;
@@ -167,8 +240,7 @@ export class Driver {
 
   /** Adds edges behind the tail until the whole train is on the route. */
   private fillBehind(hint?: Vector3) {
-    let covered = this.h;
-    for (let k = 0; k < this.route.length - 1; k++) covered += this.len(this.route[k]);
+    let covered = this.covered();
     while (covered < this.T + 10) {
       const p = this.prevStep(this.route[0], hint);
       if (!p) break;
@@ -211,12 +283,7 @@ export class Driver {
     const g = this.graph;
     const ends = [...g.nodes.values()].filter((n) => n.edges.length === 1).map((n) => n.id);
     const startNode = this.track.stations.find((s) => g.degree(s.node) > 0)?.node ?? ends[0] ?? g.edges[0].a;
-    const edge = g.nodes.get(startNode)!.edges[0];
-    this.route = [{ edge, fwd: g.edges[edge].a === startNode }];
-    this.h = 0;
-    this.advance(this.T + (g.degree(startNode) === 1 ? END_GAP : 0));
-    this.dwell = 1;
-    this.at = null;
+    this.place(startNode, g.nodes.get(startNode)!.edges[0]);
   }
 
   // --- Driving ---------------------------------------------------------------------------------
@@ -294,8 +361,11 @@ export class Driver {
     return this.dwell <= SIGNAL_LEAD;
   }
 
-  /** Advances by dt seconds; cruise = 0 stops the train where it is. Returns the distance moved. */
-  update(dt: number, cruise: number) {
+  /**
+   * Advances by dt seconds; cruise = 0 stops the train where it is. `limit` is how far the head may
+   * go (another train ahead). Returns the distance moved.
+   */
+  update(dt: number, cruise: number, limit = Infinity) {
     if (this.dwell > 0) {
       if (cruise <= 0) return 0; // the clock waits while stopped by hand
       this.dwell -= dt;
@@ -306,20 +376,28 @@ export class Driver {
     }
 
     const ahead = this.next();
+    const room = Math.max(0, limit);
     let target = cruise;
-    if (ahead) {
+    const stopAt = Math.min(ahead ? ahead.d : Infinity, room);
+    if (stopAt < Infinity) {
       // Fastest speed that still lets the train stop in time; a small floor makes it arrive.
-      const allowed = Math.sqrt(2 * BRAKE * KMH_TO_UNITS * Math.max(0, ahead.d)) / KMH_TO_UNITS;
-      target = Math.min(cruise, Math.max(allowed, cruise > 0 ? 3 : 0));
+      const allowed = Math.sqrt(2 * BRAKE * KMH_TO_UNITS * Math.max(0, stopAt)) / KMH_TO_UNITS;
+      target = Math.min(cruise, Math.max(allowed, cruise > 0 && stopAt > 0.05 ? 3 : 0));
     }
-    this.kmh = this.kmh < target ? Math.min(target, this.kmh + ACCEL * dt) : Math.max(target, this.kmh - BRAKE * 1.5 * dt);
+    this.kmh = this.kmh < target ? Math.min(target, this.kmh + this.accel * dt) : Math.max(target, this.kmh - BRAKE * 1.5 * dt);
 
     const step = this.kmh * KMH_TO_UNITS * dt;
-    if (ahead && !this.departing && step >= ahead.d - 0.02) {
+    if (ahead && !this.departing && step >= ahead.d - 0.02 && ahead.d <= room + 0.02) {
       const moved = Math.max(0, ahead.d);
       this.advance(moved);
       this.arrive(ahead.stop);
       return moved;
+    }
+    if (step >= room) {
+      // Right behind another train.
+      this.advance(room);
+      this.kmh = 0;
+      return room;
     }
     this.advance(step);
     this.travelled += step;

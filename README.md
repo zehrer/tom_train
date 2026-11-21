@@ -13,8 +13,9 @@ Build a railway in 3D and ride along in the driver's cab. Runs entirely in the b
   - **Delete** (`⌫`), **Height** (`PgUp`/`PgDn`) for bridges, **Station** (`T`) for a station with a town.
   - Templates: Network with switches, Line with towns, Oval, Figure eight, Hills. Red rings mark tracks that cross without enough height. The train stays where it is while you edit.
 - **Simulator**: the train brakes for every station, waits, and leaves when the exit signal turns green. It follows the switches and reverses at buffers (the loco then pushes and the cab view moves to the other end). Turn switches by tapping their lever (yellow strip = set way) or with **W** / the switch button for the next switch ahead. Start/stop (`Space`), speed (`↑`/`↓`), wagons (`+`/`−`), cameras: cab (`1`), follow (`2`), overview (`3`).
+- **Trains**: up to 20 at once, as many as the track has room for. Four types: steam train (80 km/h), diesel freight (100 km/h), electric passenger train (140 km/h) and high-speed train (200 km/h, a power car at each end). Every train keeps its distance to the train ahead and waits in front of switches another train is using; switches turn by themselves towards a free track (passing loops), and when two trains meet head-on, one backs off. Pick a train with ‹ ›, `N` or by tapping it; the cameras, wagon count and switch button follow it.
 - **Touch (iPad)**: one finger turns the view, two fingers zoom and move it; points can be dragged with a finger; every action has a button.
-- **Planned**: block signals and several trains, and a game mode with a small economy.
+- **Planned**: a game mode with a small economy.
 
 ## Saving, export and import
 

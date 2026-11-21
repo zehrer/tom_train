@@ -1,12 +1,23 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { Driver } from "../model/drive";
-import { clearSelection, dragNode, pickEdge, pickNode, toggleSwitch, useStore, type State } from "../model/store";
+import { clearSelection, dragNode, dropTrains, pickEdge, pickNode, selectTrain, toggleSwitch, useStore, type State, type TrainSpec } from "../model/store";
+import { Traffic } from "../model/traffic";
+import { trainType, type TrainType } from "../model/trains";
 import { poseBetween, TrackGraph, type Switches, type Track } from "../model/track";
 import { buildSwitches, buildTrack, RAIL_TOP, rng, Signal } from "./trackMesh";
-import { makeLoco, makeWagon, Smoke, type Car } from "./train";
+import { buildTrain, CAR_GAP, disposeCar, Smoke, type TrainModel } from "./train";
 
-const GAP = 0.5;
+/** One train on screen. */
+interface TrainView {
+  id: number;
+  type: TrainType;
+  wagons: number;
+  model: TrainModel;
+  group: THREE.Group;
+  smoke: Smoke | null;
+  distance: number;
+}
+
 const SUN_OFFSET = new THREE.Vector3(50, 90, 35);
 /** Fingers are less precise than a mouse: bigger targets, more slack for a tap. */
 const coarse = () => typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
@@ -15,12 +26,13 @@ const coarse = () => typeof matchMedia !== "undefined" && matchMedia("(pointer: 
 export class World {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1200);
+  private camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
   private controls: OrbitControls;
   private sun: THREE.DirectionalLight;
   private last = performance.now();
   private frame = 0;
   private resize: ResizeObserver;
+  private ground: THREE.Mesh;
 
   private trackRef: Track | null = null;
   private graph!: TrackGraph;
@@ -36,16 +48,15 @@ export class World {
   private trees: { trunk: THREE.InstancedMesh; crown: THREE.InstancedMesh; spots: THREE.Vector3[] };
   private houses: { body: THREE.InstancedMesh; roof: THREE.InstancedMesh; spots: { p: THREE.Vector3; r: number }[] };
 
-  private cars: Car[] = [];
-  private trainLength = 0;
   private trainGroup = new THREE.Group();
-  private wagonCount = -1;
-  private driver: Driver | null = null;
-  private smoke = new Smoke();
-  private distance = 0;
+  private traffic: Traffic | null = null;
+  private views = new Map<number, TrainView>();
+  private trainsRef: TrainSpec[] | null = null;
+  private signalLength = -1;
   private lastLive = 0;
 
   private lastCam: string | null = null;
+  private camTrain = -1;
   private lookAt = new THREE.Vector3();
   private dragging: number | null = null;
   private down: { x: number; y: number; id: number } | null = null;
@@ -71,15 +82,17 @@ export class World {
     this.sun.shadow.bias = -0.0005;
     this.scene.add(this.sun, this.sun.target);
 
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(700, 64), new THREE.MeshStandardMaterial({ color: 0x8dbb62, roughness: 1 }));
+    // The ground moves along under the camera and reaches well past the fog, so it has no visible edge.
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(1600, 64), new THREE.MeshStandardMaterial({ color: 0x8dbb62, roughness: 1 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.02;
     ground.receiveShadow = true;
     this.scene.add(ground);
+    this.ground = ground;
 
     this.trees = this.makeTrees();
     this.houses = this.makeHouses();
-    this.scene.add(this.trainGroup, this.smoke.group, this.conflicts, this.handles);
+    this.scene.add(this.trainGroup, this.conflicts, this.handles);
 
     // One finger turns the view, two fingers zoom and move it.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -129,14 +142,13 @@ export class World {
     this.last = now;
     const st = useStore.getState();
     const trackChanged = st.track !== this.trackRef;
-    const wagonsChanged = st.wagons !== this.wagonCount;
     if (trackChanged) this.setTrack(st.track);
-    if (wagonsChanged) this.setWagons(st.wagons);
-    if (trackChanged || wagonsChanged) this.syncDriver(st);
+    if (trackChanged || st.trains !== this.trainsRef) this.syncTrains(st, trackChanged);
     this.updateSwitches(st);
     this.updateHandles(st);
-    this.updateTrain(st, dt);
+    this.updateTrains(st, dt);
     this.updateCamera(st, dt);
+    this.ground.position.set(this.camera.position.x, -0.02, this.camera.position.z);
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -167,6 +179,7 @@ export class World {
       this.conflicts.add(m);
     }
     this.placeScenery(track);
+    this.traffic?.setTrack(this.graph, track);
   }
 
   private updateSwitches(st: State) {
@@ -178,7 +191,7 @@ export class World {
     }
     this.switchMesh = buildSwitches(this.graph, st.switches);
     this.scene.add(this.switchMesh.group);
-    this.driver?.setSwitches(st.switches);
+    this.traffic?.setSwitches(st.switches);
   }
 
   private makeTrees() {
@@ -240,21 +253,67 @@ export class World {
     h.body.instanceMatrix.needsUpdate = h.roof.instanceMatrix.needsUpdate = true;
   }
 
-  // --- Train and signals -------------------------------------------------------------------
+  // --- Trains and signals ------------------------------------------------------------------
 
-  private setWagons(n: number) {
-    this.wagonCount = n;
-    this.trainGroup.clear();
-    this.cars = [makeLoco(), ...Array.from({ length: n }, (_, i) => makeWagon(i))];
-    for (const c of this.cars) this.trainGroup.add(c.group);
-    this.trainLength = this.cars.reduce((sum, c) => sum + c.length, 0) + GAP * (this.cars.length - 1);
+  private makeView(spec: TrainSpec): TrainView {
+    const model = buildTrain(spec.type, spec.wagons, spec.id - 1);
+    const group = new THREE.Group();
+    group.userData.train = spec.id;
+    for (const c of model.cars) {
+      c.group.userData.train = spec.id;
+      group.add(c.group);
+    }
+    const smoke = model.exhaust ? new Smoke(model.exhaust.color) : null;
+    if (smoke) group.add(smoke.group);
+    this.trainGroup.add(group);
+    return { id: spec.id, type: spec.type, wagons: spec.wagons, model, group, smoke, distance: 0 };
   }
 
-  private syncDriver(st: State) {
-    if (this.driver) this.driver.setTrack(this.graph, st.track, this.trainLength, st.switches);
-    else this.driver = new Driver(this.graph, st.track, this.trainLength, st.switches);
+  private dropView(v: TrainView) {
+    this.trainGroup.remove(v.group);
+    v.model.cars.forEach(disposeCar);
+    v.smoke?.dispose();
+  }
 
-    // Exit signals beyond the head of a train standing at each station, on every track leaving it.
+  /** Brings the trains on screen and in the simulation in line with the store. */
+  private syncTrains(st: State, trackChanged: boolean) {
+    this.trainsRef = st.trains;
+    this.traffic ??= new Traffic(this.graph, st.track, st.switches);
+    const traffic = this.traffic;
+    const keep = new Set(st.trains.map((t) => t.id));
+    for (const [id, v] of this.views) {
+      if (keep.has(id)) continue;
+      this.dropView(v);
+      this.views.delete(id);
+      traffic.remove(id);
+    }
+    const failed: number[] = [];
+    for (const spec of st.trains) {
+      const old = this.views.get(spec.id);
+      if (old && old.type === spec.type && old.wagons === spec.wagons) continue;
+      const info = trainType(spec.type);
+      const v = this.makeView(spec);
+      const opts = { maxKmh: info.maxKmh, accel: info.accel };
+      if (old) {
+        v.distance = old.distance;
+        this.dropView(old);
+        traffic.change(spec.id, v.model.length, opts);
+      } else if (!traffic.add(spec.id, v.model.length, opts)) {
+        this.dropView(v);
+        failed.push(spec.id);
+        continue;
+      }
+      this.views.set(spec.id, v);
+    }
+    if (failed.length) dropTrains(failed);
+
+    const longest = Math.max(0, ...[...this.views.values()].map((v) => v.model.length));
+    if (trackChanged || longest !== this.signalLength) this.buildSignals(st, longest);
+  }
+
+  /** Exit signals beyond the head of a train standing at each station, on every track leaving it. */
+  private buildSignals(st: State, trainLength: number) {
+    this.signalLength = trainLength;
     for (const x of this.signals) {
       this.scene.remove(x.signal.group);
       x.signal.dispose();
@@ -264,7 +323,7 @@ export class World {
       const n = this.graph.nodes.get(station.node);
       if (!n) return;
       // At a terminus the train stands with its tail at the buffers, so its head is further out.
-      const at = n.edges.length === 1 ? this.trainLength + 4.5 : this.trainLength / 2 + 3;
+      const at = n.edges.length === 1 ? trainLength + 4.5 : trainLength / 2 + 3;
       for (const e of n.edges) {
         const edge = this.graph.edges[e];
         if (at > edge.length - 1) continue;
@@ -279,45 +338,63 @@ export class World {
     });
   }
 
-  private updateTrain(st: State, dt: number) {
-    const d = this.driver!;
+  private updateTrains(st: State, dt: number) {
+    const traffic = this.traffic!;
     const cruise = st.mode === "simulator" && st.running ? st.speed : 0;
-    const ds = d.update(dt, cruise);
-    this.distance += ds;
+    const { moved, turned } = traffic.update(dt, cruise);
+    for (const node of turned) toggleSwitch(node);
 
-    // Vehicles from the head backwards; when pushing, the loco is at the tail and all face backwards.
-    const order = d.flipped ? [...this.cars].reverse() : this.cars;
-    let dist = 0;
-    order.forEach((car, k) => {
-      dist += k === 0 ? car.length / 2 : order[k - 1].length / 2 + GAP + car.length / 2;
-      const front = d.pointBehind(dist - car.half), back = d.pointBehind(dist + car.half);
-      if (d.flipped) poseBetween(back, front, car.group.position, car.group.quaternion);
-      else poseBetween(front, back, car.group.position, car.group.quaternion);
-      car.group.position.y += RAIL_TOP;
-      for (const w of car.wheels) w.mesh.rotation.x += ((d.flipped ? -1 : 1) * ds) / w.radius;
-    });
-
-    // An exit signal is green from shortly before departure until the head has passed it.
-    const head = d.head;
-    for (const x of this.signals) {
-      x.signal.set(d.at?.station === x.station && d.clear && head.edge === x.edge && head.fwd === x.fwd && d.h < x.at);
+    for (const t of traffic.trains) {
+      const v = this.views.get(t.id);
+      if (!v) continue;
+      const d = t.driver;
+      const ds = moved.get(t.id) ?? 0;
+      v.distance += ds;
+      const cars = v.model.cars;
+      // Vehicles from the head backwards; when pushing, the loco is at the tail and all face backwards.
+      const order = d.flipped ? [...cars].reverse() : cars;
+      let dist = 0;
+      order.forEach((car, k) => {
+        dist += k === 0 ? car.length / 2 : order[k - 1].length / 2 + CAR_GAP + car.length / 2;
+        const front = d.pointBehind(dist - car.half), back = d.pointBehind(dist + car.half);
+        if (d.flipped) poseBetween(back, front, car.group.position, car.group.quaternion);
+        else poseBetween(front, back, car.group.position, car.group.quaternion);
+        car.group.position.y += RAIL_TOP;
+        for (const w of car.wheels) w.mesh.rotation.x += ((d.flipped ? -1 : 1) * ds) / w.radius;
+      });
+      if (v.smoke && v.model.exhaust) {
+        const ex = v.model.exhaust;
+        v.smoke.update(dt, cars[0].group.localToWorld(ex.at.clone()), ex.rate(d.kmh));
+      }
     }
 
-    const loco = this.cars[0].group;
-    this.smoke.update(dt, loco.localToWorld(new THREE.Vector3(0, 3.7, 2.1)), 1.5 + d.kmh / 6);
+    // An exit signal is green from shortly before departure until the head has passed it, if the line is free.
+    for (const x of this.signals) {
+      x.signal.set(
+        traffic.trains.some(({ driver: d, limit }) => {
+          const head = d.head;
+          return d.at?.station === x.station && d.clear && head.edge === x.edge && head.fwd === x.fwd && d.h < x.at && limit > 10;
+        }),
+      );
+    }
 
     const now = performance.now();
     if (now - this.lastLive > 150) {
       this.lastLive = now;
+      const t = traffic.get(st.active) ?? traffic.trains[0];
+      const v = t && this.views.get(t.id);
+      if (!t || !v) return;
+      const d = t.driver;
       const next = d.dwell > 0 ? null : d.next()?.stop;
       const sw = d.nextSwitch();
       useStore.setState({
         live: {
           kmh: Math.round(d.kmh),
-          distance: this.distance / (0.6 * 1000),
+          distance: v.distance / (0.6 * 1000),
           at: d.dwell > 0 && d.at ? (d.at.name ?? "End of the line") : null,
           next: next ? (next.name ?? "End of the line") : null,
           nextSwitch: sw ? { node: sw.node, diverging: st.switches[sw.node] === 1 } : null,
+          waiting: cruise > 0 && d.dwell <= 0 && t.limit < 1 && d.kmh < 1,
         },
       });
     }
@@ -337,9 +414,18 @@ export class World {
       this.camera.updateProjectionMatrix();
     }
 
-    const d = this.driver!;
-    // The vehicle at the head: the loco, or the last wagon when pushing.
-    const lead = d.flipped ? this.cars[this.cars.length - 1] : this.cars[0];
+    const t = this.traffic?.get(st.active) ?? this.traffic?.trains[0];
+    const v = t && this.views.get(t.id);
+    if (!t || !v) {
+      this.controls.update();
+      return;
+    }
+    const d = t.driver;
+    // The vehicle at the head: the loco, or the last car when pushing.
+    const cars = v.model.cars;
+    const lead = d.flipped ? cars[cars.length - 1] : cars[0];
+    const switched = v.id !== this.camTrain;
+    this.camTrain = v.id;
     const headP = d.pointBehind(0);
     const fwd = headP.clone().sub(d.pointBehind(4)).setY(0).normalize();
     this.followSun(orbit ? this.controls.target : lead.group.position);
@@ -358,18 +444,18 @@ export class World {
     }
     if (cam === "cab") {
       // Driver's seat on the right, looking along the track ahead.
-      const seat = d.flipped ? new THREE.Vector3(0.6, 3.5, -lead.length / 2 + 0.4) : new THREE.Vector3(-0.6, 3.0, -1.4);
+      const seat = ((d.flipped ? lead.cab?.back : lead.cab?.front) ?? new THREE.Vector3(0, 3.5, 0)).clone();
       this.camera.position.copy(lead.group.localToWorld(seat));
       const ahead = d.pointAhead(22);
       ahead.y += RAIL_TOP + 1.6;
-      if (changed) this.lookAt.copy(ahead);
+      if (changed || switched) this.lookAt.copy(ahead);
       this.lookAt.lerp(ahead, 1 - Math.exp(-6 * dt));
       this.camera.lookAt(this.lookAt);
       return;
     }
     // Follow: behind and above the head of the train, smoothed.
     const want = lead.group.position.clone().addScaledVector(fwd, -16).add(new THREE.Vector3(0, 7, 0));
-    if (changed) this.camera.position.copy(want);
+    if (changed || switched) this.camera.position.copy(want);
     this.camera.position.lerp(want, 1 - Math.exp(-3 * dt));
     this.camera.lookAt(lead.group.position.clone().add(new THREE.Vector3(0, 1.5, 0)));
   }
@@ -479,6 +565,16 @@ export class World {
     if (lever) {
       toggleSwitch(lever.object.userData.switchNode as number);
       return;
+    }
+    // A tap on a train makes it the one the cameras and controls follow.
+    const car = rc.intersectObjects(this.trainGroup.children, true)[0];
+    if (car) {
+      let o: THREE.Object3D | null = car.object;
+      while (o && o.userData.train === undefined) o = o.parent;
+      if (o) {
+        selectTrain(o.userData.train as number);
+        return;
+      }
     }
     if (useStore.getState().mode !== "editor" || !this.trackMesh) return;
     const bed = rc.intersectObjects(this.trackMesh.beds)[0];
