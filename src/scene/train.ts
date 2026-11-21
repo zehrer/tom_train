@@ -162,7 +162,8 @@ function dieselLoco(): Car {
   for (const x of [-1.08, 1.08]) b.box(0.03, 0.7, 1.2, M.glass, x, 3.05, 2.1);
   b.box(1.5, 1.1, 1.2, M.orange, 0, 2.05, 3.6);
   b.box(2.0, 0.3, 0.25, M.yellow, 0, 1.2, 4.35);
-  b.add(new THREE.SphereGeometry(0.15, 12, 8), M.lamp, 0, 2.65, 4.21);
+  // Headlamp on the front of the nose, below the driver's line of sight.
+  b.add(new THREE.SphereGeometry(0.15, 12, 8), M.lamp, 0, 2.15, 4.22);
   b.axles([3.1, 2.1, -2.1, -3.1], 0.42);
   return b.car(9.0, 2.6, { front: new THREE.Vector3(-0.55, 3.15, 2.1) });
 }

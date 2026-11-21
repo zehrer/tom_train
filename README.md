@@ -15,6 +15,8 @@ Build a railway in 3D and ride along in the driver's cab. Runs entirely in the b
 - **Simulator**: the train brakes for every station, waits, and leaves when the exit signal turns green. It follows the switches and reverses at buffers (the loco then pushes and the cab view moves to the other end). Turn switches by tapping their lever (yellow strip = set way) or with **W** / the switch button for the next switch ahead. Start/stop (`Space`), speed (`↑`/`↓`), wagons (`+`/`−`), cameras: cab (`1`), follow (`2`), overview (`3`).
 - **Trains**: up to 20 at once, as many as the track has room for. Four types: steam train (80 km/h), diesel freight (100 km/h), electric passenger train (140 km/h) and high-speed train (200 km/h, a power car at each end). Every train keeps its distance to the train ahead and waits in front of switches another train is using; switches turn by themselves towards a free track (passing loops), and when two trains meet head-on, one backs off. Pick a train with ‹ ›, `N` or by tapping it; the cameras, wagon count and switch button follow it.
 - **Touch (iPad)**: one finger turns the view, two fingers zoom and move it; points can be dragged with a finger; every action has a button.
+- **Phone**: on small screens the 3D view fills the screen; a slim top bar has the mode switch and a ☰ menu, the most important buttons float at the bottom, and ⋯ opens the full toolbar.
+- **Landscape**: the ground, forests, meadows and farmhouses go on to the horizon. They are generated from the position alone, so the same place always looks the same and nothing needs to be stored.
 - **Planned**: a game mode with a small economy.
 
 ## Saving, export and import

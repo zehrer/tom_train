@@ -4,7 +4,8 @@ import { clearSelection, dragNode, dropTrains, pickEdge, pickNode, selectTrain, 
 import { Traffic } from "../model/traffic";
 import { trainType, type TrainType } from "../model/trains";
 import { poseBetween, TrackGraph, type Switches, type Track } from "../model/track";
-import { buildSwitches, buildTrack, RAIL_TOP, rng, Signal } from "./trackMesh";
+import { Scenery } from "./scenery";
+import { buildSwitches, buildTrack, RAIL_TOP, Signal } from "./trackMesh";
 import { buildTrain, CAR_GAP, disposeCar, Smoke, type TrainModel } from "./train";
 
 /** One train on screen. */
@@ -45,8 +46,7 @@ export class World {
   private handleRefs: { track: Track | null; selected: State["selected"]; connectFrom: number | null } = { track: null, selected: null, connectFrom: null };
   private signals: { signal: Signal; station: number; edge: number; fwd: boolean; at: number }[] = [];
 
-  private trees: { trunk: THREE.InstancedMesh; crown: THREE.InstancedMesh; spots: THREE.Vector3[] };
-  private houses: { body: THREE.InstancedMesh; roof: THREE.InstancedMesh; spots: { p: THREE.Vector3; r: number }[] };
+  private scenery = new Scenery();
 
   private trainGroup = new THREE.Group();
   private traffic: Traffic | null = null;
@@ -90,9 +90,7 @@ export class World {
     this.scene.add(ground);
     this.ground = ground;
 
-    this.trees = this.makeTrees();
-    this.houses = this.makeHouses();
-    this.scene.add(this.trainGroup, this.conflicts, this.handles);
+    this.scene.add(this.scenery.group, this.trainGroup, this.conflicts, this.handles);
 
     // One finger turns the view, two fingers zoom and move it.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -123,6 +121,7 @@ export class World {
     window.removeEventListener("pointerup", this.onUp);
     window.removeEventListener("pointercancel", this.onCancel);
     this.controls.dispose();
+    this.scenery.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -149,6 +148,7 @@ export class World {
     this.updateTrains(st, dt);
     this.updateCamera(st, dt);
     this.ground.position.set(this.camera.position.x, -0.02, this.camera.position.z);
+    this.scenery.update(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -178,7 +178,7 @@ export class World {
       m.position.set(p.x, p.y + 1.2, p.z);
       this.conflicts.add(m);
     }
-    this.placeScenery(track);
+    this.scenery.setTrack(this.graph, track);
     this.traffic?.setTrack(this.graph, track);
   }
 
@@ -192,65 +192,6 @@ export class World {
     this.switchMesh = buildSwitches(this.graph, st.switches);
     this.scene.add(this.switchMesh.group);
     this.traffic?.setSwitches(st.switches);
-  }
-
-  private makeTrees() {
-    const r = rng(7);
-    const spots = Array.from({ length: 320 }, () => {
-      const a = r() * Math.PI * 2, d = 12 + Math.sqrt(r()) * 220;
-      return new THREE.Vector3(Math.cos(a) * d, 0.6 + r() * 0.9, Math.sin(a) * d);
-    });
-    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.25, 0.35, 2, 6), new THREE.MeshStandardMaterial({ color: 0x6d4c33 }), spots.length);
-    const crown = new THREE.InstancedMesh(new THREE.ConeGeometry(1.6, 4, 8), new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.9 }), spots.length);
-    trunk.castShadow = crown.castShadow = true;
-    crown.receiveShadow = true;
-    this.scene.add(trunk, crown);
-    return { trunk, crown, spots };
-  }
-
-  private makeHouses() {
-    const r = rng(11);
-    const spots = Array.from({ length: 14 }, () => {
-      const a = r() * Math.PI * 2, d = 40 + r() * 140;
-      return { p: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d), r: r() * Math.PI };
-    });
-    const body = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 3.4, 4), new THREE.MeshStandardMaterial({ color: 0xf5efe3 }), spots.length);
-    const roofGeo = new THREE.ConeGeometry(4.2, 2.4, 4);
-    roofGeo.rotateY(Math.PI / 4);
-    roofGeo.scale(1.25, 1, 1);
-    const roof = new THREE.InstancedMesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0xb3412f }), spots.length);
-    body.castShadow = body.receiveShadow = roof.castShadow = true;
-    this.scene.add(body, roof);
-    return { body, roof, spots };
-  }
-
-  /** Hides trees and farmhouses that would stand on the track or in a town. */
-  private placeScenery(track: Track) {
-    const pts = this.graph.samples(2).map(({ p }) => p);
-    const towns = track.stations.map((st) => this.graph.nodes.get(st.node)?.p).filter((p): p is THREE.Vector3 => !!p);
-    const free = (v: THREE.Vector3, d: number) =>
-      towns.every((t) => Math.hypot(v.x - t.x, v.z - t.z) > 40) && pts.every((p) => Math.hypot(p.x - v.x, p.z - v.z) > d);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const { trunk, crown, spots } = this.trees;
-    spots.forEach((v, i) => {
-      const s = free(v, 4.5) ? v.y : 0;
-      m.compose(new THREE.Vector3(v.x, s, v.z), q, new THREE.Vector3(s, s, s));
-      trunk.setMatrixAt(i, m);
-      m.compose(new THREE.Vector3(v.x, s * 3.4, v.z), q, new THREE.Vector3(s, s, s));
-      crown.setMatrixAt(i, m);
-    });
-    trunk.instanceMatrix.needsUpdate = crown.instanceMatrix.needsUpdate = true;
-    const h = this.houses;
-    h.spots.forEach(({ p, r }, i) => {
-      const s = free(p, 8) ? 1 : 0;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r);
-      m.compose(new THREE.Vector3(p.x, 1.7 * s, p.z), q, new THREE.Vector3(s, s, s));
-      h.body.setMatrixAt(i, m);
-      m.compose(new THREE.Vector3(p.x, 4.6 * s, p.z), q, new THREE.Vector3(s, s, s));
-      h.roof.setMatrixAt(i, m);
-    });
-    h.body.instanceMatrix.needsUpdate = h.roof.instanceMatrix.needsUpdate = true;
   }
 
   // --- Trains and signals ------------------------------------------------------------------

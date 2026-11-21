@@ -9,16 +9,17 @@ import { exportHTML, importFromPicker, newTrack, save, saveAs, showOpen } from "
 export const LIVE_URL = "https://zehrer.github.io/tom_train/";
 export const REPO_URL = "https://github.com/zehrer/tom_train";
 
-type Item = "-" | { heading: string } | { label: string; shortcut?: string; disabled?: boolean; action: () => void };
+export type Item = "-" | { heading: string } | { label: string; shortcut?: string; disabled?: boolean; action: () => void };
 
 const check = (on: boolean, label: string) => `${on ? "✓ " : " "}${label}`;
 
-export function Header() {
-  const [open, setOpen] = useState<number | null>(null);
+export type Menu = { label: string; items: Item[] };
+
+/** The menus, shared by the desktop menu bar and the phone menu sheet. */
+export function useMenus(): Menu[] {
   const s = useStore();
   const editor = s.mode === "editor";
-
-  const menus: { label: string; items: Item[] }[] = [
+  return [
     {
       label: "File",
       items: [
@@ -91,6 +92,13 @@ export function Header() {
       ],
     },
   ];
+}
+
+export function Header() {
+  const [open, setOpen] = useState<number | null>(null);
+  const s = useStore();
+  const editor = s.mode === "editor";
+  const menus = useMenus();
 
   return (
     <header className="header">

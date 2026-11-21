@@ -20,12 +20,12 @@ export function SimulatorBar() {
   const index = s.trains.indexOf(train);
   return (
     <div className="toolbar">
-      <button className={`play${s.running ? " on" : ""}`} onClick={toggleRunning} title="Start / stop (Space)">
+      <button className={`play dup${s.running ? " on" : ""}`} onClick={toggleRunning} title="Start / stop (Space)">
         {s.running ? "■ Stop" : "▶ Start"}
       </button>
       <span className="sep" />
-      <span className="label">Speed</span>
-      <div className="stepper">
+      <span className="label dup">Speed</span>
+      <div className="stepper dup">
         <button onClick={() => stepSpeed(-1)} disabled={s.speed <= SPEED_STEP} title="Slower (↓)" aria-label="Slower">−</button>
         <span className="value">{s.speed} km/h</span>
         <button onClick={() => stepSpeed(1)} disabled={s.speed >= MAX_SPEED} title="Faster (↑)" aria-label="Faster">+</button>
@@ -54,7 +54,7 @@ export function SimulatorBar() {
         ⑂ {sw ? (sw.diverging ? "Turn off" : "Straight on") : "No switch ahead"}
       </button>
       <span className="spacer" />
-      <div className="segmented">
+      <div className="segmented dup">
         {CAMERAS.map((c) => (
           <button key={c.id} className={s.camera === c.id ? "on" : ""} title={c.title} onClick={() => setCamera(c.id)}>
             {c.label}

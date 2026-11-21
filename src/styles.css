@@ -159,3 +159,62 @@ main { flex: 1; min-height: 0; position: relative; margin: 0 16px 16px; border-r
   .name-input { padding: 10px 14px; }
   .dialog-actions button { padding: 12px 18px; }
 }
+
+/* --- Phone: slim header, the 3D view fills the screen, a few floating buttons --- */
+.phone-header {
+  display: flex; align-items: center; gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
+}
+.phone-header .logo { width: 28px; height: 28px; }
+.phone-header .title { flex: 1; min-width: 0; max-width: none; font-size: 16px; padding: 4px 6px; field-sizing: fixed; text-overflow: ellipsis; }
+.dirty-dot { width: 8px; height: 8px; border-radius: 50%; background: #e37400; flex: none; }
+.phone-header .segmented button { height: 36px; padding: 0 12px; font-size: 15px; }
+.icon-btn { border: 0; background: none; width: 40px; height: 40px; border-radius: 50%; font-size: 20px; flex: none; }
+.icon-btn:hover, .icon-btn:active { background: var(--hover); }
+
+.app.phone main { margin: 0; border-radius: 0; }
+.app.phone .status {
+  top: 8px; bottom: auto; left: 8px; max-width: calc(100% - 16px); padding: 4px 10px; gap: 2px 10px; font-size: 13px;
+}
+.app.phone .speedo b { font-size: 18px; }
+
+.phone-controls {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; align-items: center; gap: 8px;
+  padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+.phone-controls > * { pointer-events: auto; box-shadow: 0 1px 4px rgb(60 64 67 / 30%); }
+.phone-controls .play {
+  border: 0; width: 48px; height: 48px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 18px; flex: none;
+}
+.phone-controls .play.on { background: var(--danger); }
+.phone-controls .stepper { border-radius: 24px; padding: 4px; }
+.phone-controls .stepper button { width: 40px; height: 40px; font-size: 20px; }
+.phone-controls .stepper .value { min-width: 40px; font-weight: 500; }
+.chip {
+  border: 0; height: 48px; padding: 0 16px; border-radius: 24px; background: var(--surface); white-space: nowrap; font-weight: 500; flex: none;
+}
+.chip.accent { background: var(--accent); color: #fff; }
+.chip.on { background: var(--accent-soft); color: #041e49; }
+.chip.more { width: 48px; padding: 0; font-size: 20px; }
+
+.phone-panel {
+  position: absolute; left: 8px; right: 8px; bottom: calc(72px + env(safe-area-inset-bottom)); max-height: 55%; overflow-y: auto;
+  border-radius: 20px; box-shadow: 0 2px 12px rgb(60 64 67 / 30%);
+}
+.phone-panel .toolbar { margin: 0; flex-wrap: wrap; overflow: visible; border-radius: 20px; row-gap: 8px; padding: 8px; background: rgb(237 242 250 / 96%); }
+.phone-panel .toolbar .spacer, .phone-panel .toolbar .sep { display: none; }
+
+.sheet-backdrop { position: fixed; inset: 0; z-index: 30; background: rgb(0 0 0 / 30%); display: flex; justify-content: flex-end; }
+.menu-sheet {
+  width: min(340px, 88vw); height: 100%; overflow-y: auto; background: var(--surface);
+  padding: max(8px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 4px 20px; font-size: 16px; }
+.menu-sheet section { border-top: 1px solid var(--line); padding: 6px 0; }
+.menu-sheet h3 { margin: 6px 20px 2px; font-size: 13px; font-weight: 500; color: var(--accent); }
+.menu-sheet .menu-heading { padding: 6px 20px 2px; }
+.menu-sheet button:not(.icon-btn) { display: block; width: 100%; border: 0; background: none; text-align: left; padding: 11px 20px; }
+.menu-sheet button:not(.icon-btn):active:not(:disabled) { background: var(--hover); }
+/* In the phone panel: no repeats of the floating buttons, each label starts a new line. */
+.phone-panel .dup { display: none !important; }
+.phone-panel .label { flex-basis: 100%; padding: 2px 4px 0; color: var(--muted); font-size: 12px; }
